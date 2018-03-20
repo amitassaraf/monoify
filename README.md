@@ -28,6 +28,8 @@ This will create a mono repo like so
 	------ web-module
 	------ mobile-module
 
+after it is created just *cd* into the *unirepo* add a remote and push it to your desired git server.
+
 Mono-Repo vs Multi-Repo
 -
 If you are wondering why this exists then you should read some of the following posts to see the benefits of a mono-repo and what it is.
