@@ -1,0 +1,202 @@
+#! /usr/bin/env bash
+
+# Example: monify create my_repo "api-module web-module mobile-module" https://amitassaraf@bitbucket.org/project
+# Example: monify clean
+
+set -e
+set -x
+
+BASH_VERSION=$(/usr/bin/env bash --version)
+
+if [[ $string = *"version 3"* ]]; then
+  echo "bash version 4 and higher is required."
+  exit
+else
+	if [[ $string = *"version 4"* ]]; then
+  		echo "bash version is good."
+  	fi
+fi
+
+COMMAND=$1
+
+if [[ $COMMAND == clean ]]; then
+	sudo unmount $TMPFS_DIR || :
+	rmdir $TMPFS_DIR || :
+	rm -rf $BUILD_DIR
+	exit
+fi
+
+REPO_NAME=$2
+
+BUILD_DIR="$PWD/mega$REPO_NAME"
+MERGED_DIR="$BUILD_DIR/uni$REPO_NAME"
+
+GIT_URL=$4
+REPOS=$3
+
+INITIAL_COMMIT="init"
+TMPFS_DIR="$BUILD_DIR/tmp"
+GRAFTS_FILE="$MERGED_DIR/.git/info/grafts"
+
+function clone_repos {
+	for repo in $REPOS; do
+		cd $BUILD_DIR
+		mkdir $repo
+		git clone --mirror "$GIT_URL/$repo.git" "$repo/.git"
+		cd $repo
+
+		git config --bool core.bare false
+		git reset --hard HEAD
+
+		# We dont want tto later filter the remote branches
+		# This is also a safeguard against pushing any changes we make to the server
+		git remote remove origin
+	done
+}
+
+# sed "s,\t\"*,&'"$1"'/,"
+function move_to_dir {
+	repo_upper=$(echo $repo | tr /a-z/ /A-Z/)
+	git ls-files -s | sed "s,	,&"$1"/,"
+
+	case "$(uname -s)" in
+	   Darwin)
+	     echo 'Mac OS X'
+	     git filter-branch -d "$TMPFS_DIR/$1" --tag-name-filter cat --index-filter '
+	git ls-files -s | gsed "s,\t\"*,&'"$1"'/," | 
+	GIT_INDEX_FILE=$GIT_INDEX_FILE.new git update-index --index-info && 
+	mv "$GIT_INDEX_FILE.new" "$GIT_INDEX_FILE"' --msg-filter '
+	echo -n "['$repo_upper']: " && cat
+	' -- --all;
+	     ;;
+	   Linux)
+	     echo 'Linux'
+		 sudo mount -t tmpfs -o size=512m tmpfs $TMPFS_DIR
+		 git filter-branch -d "$TMPFS_DIR/$1" --tag-name-filter cat --index-filter '
+	git ls-files -s | sed "s,\t\"*,&'"$1"'/," | 
+	GIT_INDEX_FILE=$GIT_INDEX_FILE.new git update-index --index-info && 
+	mv "$GIT_INDEX_FILE.new" "$GIT_INDEX_FILE"' --msg-filter '
+	echo -n "['$repo_upper']: " && cat
+	' -- --all;
+	     ;;
+	   CYGWIN*|MINGW32*|MSYS*)
+	     echo 'MS Windows is not supported.'
+	     exit
+	     ;;
+	   *)
+	     echo 'OS is not supported.'
+	     exit 
+	     ;;
+	esac
+}
+
+function filter_all_branches {
+	# Setup tmpfs if on linux to speed up filtering
+	mkdir $TMPFS_DIR
+	case "$(uname -s)" in
+	   Darwin)
+	     echo 'Mac OS X'
+	     ;;
+	   Linux)
+	     echo 'Linux'
+		 sudo mount -t tmpfs -o size=512m tmpfs $TMPFS_DIR
+	     ;;
+	   CYGWIN*|MINGW32*|MSYS*)
+	     echo 'MS Windows is not supported.'
+	     exit
+	     ;;
+	   *)
+	     echo 'OS is not supported.'
+	     exit 
+	     ;;
+	esac
+
+	for repo in $REPOS; do
+		cd $BUILD_DIR/$repo
+		move_to_dir $repo
+		# Remove original refs
+		git for-each-ref --format="$(refname)" refs/original | xargs -n 1 git update-ref -d
+		git reflog expire --expire=now --all
+		git gc --prune=now
+	done
+}
+
+function setup_merged_repo {
+	# Creates and initializes the final merged repo, adds a remove for each repo to pull in
+	mkdir -p $MERGED_DIR
+	cd $MERGED_DIR
+	git init
+	touch .gitignore
+	git add .
+	git commit -m "Root commit to be shared (grafted) in merge"
+	git branch $INITIAL_COMMIT
+	INITIAL_COMMIT_HASH=$(git rev-list $INITIAL_COMMIT)
+	echo $INITIAL_COMMIT_HASH >> $GRAFTS_FILE
+
+	for repo in $REPOS; do
+		git remote add $repo $BUILD_DIR/$repo
+		# The following solution was taken from stackoverflow "git octopus merge with unrelated repositories"
+		# The octupus merge will fail since they have unrelated history
+		# Add each root of repo to the grafts file
+		cd $BUILD_DIR/$repo
+		for root in $(git rev-list --all --max-parents=0); do
+			echo $root $INITIAL_COMMIT_HASH >> $GRAFTS_FILE
+		done
+		cd $MERGED_DIR
+	done
+}
+
+function clean_merged_repo {
+	git branch -d $INITIAL_COMMIT
+	> $GRAFTS_FILE
+	for repo in $REPOS; do git remote remove $repo; done
+}
+
+function merge_branches {
+	# Expects <local_branch> <remote:branch>
+	# where the second argument is an associative array of repo name to branch to be merged
+	git checkout $INITIAL_COMMIT
+	git checkout -B "$1"
+	local -n branch_map=$2
+	BRANCHES_TO_MERGE=""
+	for remote in "${!branch_map[@]}"; do
+		git fetch ${remote} ${branch_map[${remote}]}
+		BRANCHES_TO_MERGE+="${remote}/${branch_map[${remote}]} "
+	done
+	# BRANCHES_TO_MERGE is purposely unquoted so the branches expand to seperate arguments
+	# this will be one large octupus merge, there can be no conflicts since every repo is
+	# in a different subdirectory
+	git merge --no-edit $BRANCHES_TO_MERGE
+}
+
+if [[ $COMMAND == create ]]; then
+	mkdir -p $BUILD_DIR
+	cd $BUILD_DIR
+	clone_repos
+
+	filter_all_branches
+
+	setup_merged_repo
+
+	cd $MERGED_DIR
+	declare -A branches
+
+	IFS=' ' read -r -a repo_names <<< "$REPOS"
+
+	for index in "${!repo_names[@]}"
+	do
+		branches["${repo_names[index]}"]=master
+	done
+
+	merge_branches master branches
+
+	for index in "${!repo_names[@]}"
+	do
+		branches["${repo_names[index]}"]=develop
+	done
+
+	merge_branches develop branches
+
+	clean_merged_repo
+	exit
+fi
