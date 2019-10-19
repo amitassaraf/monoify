@@ -1,4 +1,4 @@
-#! /usr/bin/env bash
+#!  /usr/local/bin/bash
 
 # Example: monify create my_repo "api-module web-module mobile-module" https://amitassaraf@bitbucket.org/project
 # Example: monify clean
@@ -63,18 +63,18 @@ function move_to_dir {
 	   Darwin)
 	     echo 'Mac OS X'
 	     git filter-branch -d "$TMPFS_DIR/$1" --tag-name-filter cat --index-filter '
-	git ls-files -s | gsed "s,\t\"*,&'"$1"'/," | 
-	GIT_INDEX_FILE=$GIT_INDEX_FILE.new git update-index --index-info && 
+	git ls-files -s | gsed "s,\t\"*,&'"$1"'/," |
+	GIT_INDEX_FILE=$GIT_INDEX_FILE.new git update-index --index-info &&
 	mv "$GIT_INDEX_FILE.new" "$GIT_INDEX_FILE"' --msg-filter '
-	echo -n "['$repo_upper']: " && cat
+	echo "['$repo_upper']: " && cat
 	' -- --all;
 	     ;;
 	   Linux)
 	     echo 'Linux'
 		 sudo mount -t tmpfs -o size=512m tmpfs $TMPFS_DIR
 		 git filter-branch -d "$TMPFS_DIR/$1" --tag-name-filter cat --index-filter '
-	git ls-files -s | sed "s,\t\"*,&'"$1"'/," | 
-	GIT_INDEX_FILE=$GIT_INDEX_FILE.new git update-index --index-info && 
+	git ls-files -s | sed "s,\t\"*,&'"$1"'/," |
+	GIT_INDEX_FILE=$GIT_INDEX_FILE.new git update-index --index-info &&
 	mv "$GIT_INDEX_FILE.new" "$GIT_INDEX_FILE"' --msg-filter '
 	echo -n "['$repo_upper']: " && cat
 	' -- --all;
@@ -85,7 +85,7 @@ function move_to_dir {
 	     ;;
 	   *)
 	     echo 'OS is not supported.'
-	     exit 
+	     exit
 	     ;;
 	esac
 }
@@ -107,7 +107,7 @@ function filter_all_branches {
 	     ;;
 	   *)
 	     echo 'OS is not supported.'
-	     exit 
+	     exit
 	     ;;
 	esac
 
